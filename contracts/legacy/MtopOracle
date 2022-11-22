@@ -1,0 +1,118 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.9;
+
+import "./interfaces/IAvascaleOracle.sol";
+import "./libraries/Decimals.sol";
+
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+
+contract AvascaleOracle is IAvascaleOracle, Ownable {
+    /***************
+     ** Constants **
+     ***************/
+
+    uint8 private PRICE_DECIMALS = 12;
+
+    /*************
+     ** Storage **
+     *************/
+
+    /// @dev tep type defined in IAvascaleOracle
+    Step[] steps;
+
+    /*****************
+     ** Constructor **
+     *****************/
+
+    constructor(Step[] memory _steps) {
+        /// @dev solidity doesn't support direct memory copying for arrays yet
+        for (uint256 i = 0; i < _steps.length; i++) {
+            steps.push(_steps[i]);
+        }
+    }
+
+    /*******************************
+     ** Interface Implementations **
+     *******************************/
+
+    function getPriceDecimals() external view returns (uint8) {
+        return PRICE_DECIMALS;
+    }
+
+    function getSteps() external view returns (Step[] memory _steps) {
+        return steps;
+    }
+
+    function setSteps(Step[] memory _steps) external onlyOwner {
+        /// @dev empty array
+        delete steps;
+
+        /// @dev solidity doesn't support direct memory copying for arrays yet
+        for (uint256 i = 0; i < _steps.length; i++) {
+            steps.push(_steps[i]);
+        }
+    }
+
+    function getPriceAtEachStep() external view returns (uint256[] memory) {
+        return _getPriceAtEachStep();
+    }
+
+    function getDestPrice() external view returns (uint256) {
+        uint256[] memory _priceAtEachStep = _getPriceAtEachStep();
+
+        if (_priceAtEachStep.length == 0) return 0;
+
+        uint256 _price = 1;
+        for (uint256 i = 0; i < steps.length; i++) {
+            _price = _price * _priceAtEachStep[i];
+            if (i > 0) {
+                _price = _price / (10**PRICE_DECIMALS);
+            }
+        }
+        return _price;
+    }
+
+    /**************
+     ** Internal **
+     **************/
+
+    function _getPriceAtEachStep() internal view returns (uint256[] memory) {
+        uint256[] memory _priceAtEachStep = new uint256[](steps.length);
+        for (uint256 i = 0; i < steps.length; i++) {
+            Step memory _step = steps[i];
+
+            uint8 _numeratorDecimals = IERC20Metadata(_step.numerator)
+                .decimals();
+            uint8 _denominatorDecimals = IERC20Metadata(_step.denominator)
+                .decimals();
+
+            uint256 _numeratorBalance = IERC20(_step.numerator).balanceOf(
+                _step.pair
+            );
+            uint256 _denominatorBalance = IERC20(_step.denominator).balanceOf(
+                _step.pair
+            );
+
+            (
+                uint256 _numeratorBalanceFormatted,
+                uint256 _denominatorBalanceFormatted,
+
+            ) = Decimals.formatToBiggerDecimals(
+                    _numeratorDecimals,
+                    _denominatorDecimals,
+                    _numeratorBalance,
+                    _denominatorBalance
+                );
+
+            _priceAtEachStep[i] = Decimals.divWithPrecision(
+                _numeratorBalanceFormatted,
+                _denominatorBalanceFormatted,
+                PRICE_DECIMALS
+            );
+        }
+
+        return _priceAtEachStep;
+    }
+}
